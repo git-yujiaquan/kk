@@ -20,7 +20,7 @@ def main():
     fps = cfg.get("fps", 2)
     
     # 启动RTSP流处理线程
-    rtsp_thread = threading.Thread(
+    rtsp_thread = threading.Thread( 
         target=rtsp_processor,
         args=(rtsp_url, frame_queue, stop_event),
         kwargs={

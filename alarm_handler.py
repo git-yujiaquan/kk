@@ -6,6 +6,7 @@ from config_manager import load_config
 import cv2
 from datetime import datetime
 from logger_setup import get_logger
+from upload_detection import upload_numpy_image
 
 def alarm_handler(alarm_queue, stop_event, record_cmd_queue=None):
     """
@@ -22,10 +23,13 @@ def alarm_handler(alarm_queue, stop_event, record_cmd_queue=None):
         _required_hits = 1
     _types_raw = _rt.get("types", None)
     _types = set([str(x).strip() for x in _types_raw]) if isinstance(_types_raw, (list, set, tuple)) else None
+    # 冷却时间与录制时长使用同一配置值（优先 duration_sec，回退 cooldown_sec）
     try:
-        _cooldown = float(_rt.get("cooldown_sec", 60))
+        _cooldown_duration = float(_rt.get("duration_sec", _rt.get("cooldown_sec", 60)))
     except Exception:
-        _cooldown = 60.0
+        _cooldown_duration = 60.0
+    _cooldown = _cooldown_duration
+    _duration = _cooldown_duration
     _last_trigger_ts = 0.0
     _hit_streak = 0  # 连续命中计数
     logger = get_logger(__name__)
@@ -45,16 +49,16 @@ def alarm_handler(alarm_queue, stop_event, record_cmd_queue=None):
             with open(str(alarm_json_path), "a", encoding="utf-8") as f:
                 f.write(json.dumps(_log_obj, ensure_ascii=False) + "\n")
 
-            # 临时代码：将报警帧保存到本地文件夹 recognize/outputs/pic 下（后续要取消）
-            try:
-                infer_dir = Path(__file__).resolve().parent / "outputs" / "alarm_frames"
-                infer_dir.mkdir(parents=True, exist_ok=True)
-                ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-                cv2.imwrite(str(infer_dir / f"{ts}.jpg"), alarm_info.get("frame"))
-            except Exception:
-                pass
-            # 临时代码结束
-            
+            _save_pic = _cfg.get("save_pic", False)
+            if _save_pic:
+                try:
+                    infer_dir = Path(__file__).resolve().parent / "outputs" / "alarm_frames"
+                    infer_dir.mkdir(parents=True, exist_ok=True)
+                    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                    cv2.imwrite(str(infer_dir / f"{ts}.jpg"), alarm_info.get("frame"))
+                except Exception:
+                    pass
+
             _ok = True
             if _types is not None:
                 try:
@@ -72,13 +76,16 @@ def alarm_handler(alarm_queue, stop_event, record_cmd_queue=None):
             if (_hit_streak >= _required_hits) and (_now - _last_trigger_ts >= _cooldown):
                 if record_cmd_queue is not None:
                     try:
-                        record_cmd_queue.put("start", block=False)
+                        # 发送带时长的开始录制指令，rtsp_processor 将据此录制指定时长
+                        record_cmd_queue.put({"cmd": "start", "duration": _duration}, block=False)
                         _last_trigger_ts = _now
                         _hit_streak = 0  # 触发后重置计数
                     except Exception:
                         pass
             
             # 可扩展：发送HTTP请求、邮件、短信等
+            # todo 获取位置以及类别，后续可能还会上传视频
+            upload_numpy_image(alarm_info.get("frame"), "施工场景")
             
         except queue.Empty:
             # 队列空时继续等待

@@ -4,6 +4,8 @@ import queue
 import os
 from datetime import datetime
 from logger_setup import get_logger
+from collections import deque
+from config_manager import load_config
 
 def rtsp_processor(rtsp_url, frame_queue, stop_event, fps=2, resize_size=(640, 640),
                    record_cmd_queue=None, clip_dir="outputs/clips", clip_duration_sec=60):
@@ -17,7 +19,19 @@ def rtsp_processor(rtsp_url, frame_queue, stop_event, fps=2, resize_size=(640, 6
     writer = None
     recording_end_ts = 0.0
     pending_start = False
+    pending_duration = float(clip_duration_sec)
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    # 预录缓冲：从配置读取缓冲时间（秒），默认0表示不启用
+    try:
+        _cfg = load_config()
+    except Exception:
+        _cfg = {}
+    _rt = _cfg.get("record_trigger", {}) if isinstance(_cfg, dict) else {}
+    try:
+        _buffer_sec = float(_rt.get("record_buffer_sec", 0))
+    except Exception:
+        _buffer_sec = 0.0
+    _frame_buffer = deque()  # 存 (ts, frame)
     def _ensure_rtsp_tcp(url: str) -> str:
         try:
             if url.startswith("rtsp://") and "rtsp_transport=" not in url:
@@ -27,13 +41,39 @@ def rtsp_processor(rtsp_url, frame_queue, stop_event, fps=2, resize_size=(640, 6
             pass
         return url
 
+    def _augment_rtsp_url(url: str) -> str:
+        """为 RTSP URL 补充常用的 FFmpeg 可靠性参数（若未显式设置）。"""
+        try:
+            if not url.startswith("rtsp://"):
+                return url
+            q = "?" in url
+            def add_param(u: str, k: str, v: str) -> str:
+                return u if (k+"=") in u else (f"{u}{'&' if q or ('?' in u) else '?'}{k}={v}")
+            u = url
+            u = add_param(u, "rtsp_transport", "tcp")
+            u = add_param(u, "stimeout", "5000000")  # 连接/首包超时(微秒)
+            u = add_param(u, "rw_timeout", "5000000") # 读写超时(微秒)
+            u = add_param(u, "probesize", "32768")
+            u = add_param(u, "analyzeduration", "1000000")
+            u = add_param(u, "reorder_queue_size", "0")
+            u = add_param(u, "max_delay", "0")
+            return u
+        except Exception:
+            return url
+
     while not stop_event.is_set():
         # 初始化或重连RTSP流
         if not cap or not cap.isOpened():
-            # 先尝试使用原始 URL（默认传输，一般为 UDP），失败后再尝试 TCP
+            # 设置一次 FFmpeg 捕获选项，进一步约束超时（若外部未设置）
+            os.environ.setdefault(
+                "OPENCV_FFMPEG_CAPTURE_OPTIONS",
+                "rtsp_transport;tcp|stimeout;5000000|rw_timeout;5000000"
+            )
+
+            # 仅使用增强后的 URL + FFmpeg 后端
+            robust_url = _augment_rtsp_url(rtsp_url)
             attempts = [
-                (rtsp_url, None, "default"),
-                (_ensure_rtsp_tcp(rtsp_url), cv2.CAP_FFMPEG, "tcp"),
+                (robust_url, cv2.CAP_FFMPEG, "ffmpeg_tcp"),
             ]
             cap = None
             used_mode = None
@@ -43,6 +83,12 @@ def rtsp_processor(rtsp_url, frame_queue, stop_event, fps=2, resize_size=(640, 6
                 except Exception:
                     c = None
                 if c is not None and c.isOpened():
+                    # 打开后尽量设置读超时，避免长时间无数据卡住
+                    try:
+                        if hasattr(cv2, "CAP_PROP_READ_TIMEOUT_MSEC"):
+                            c.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
+                    except Exception:
+                        pass
                     cap = c
                     used_mode = mode
                     break
@@ -52,7 +98,7 @@ def rtsp_processor(rtsp_url, frame_queue, stop_event, fps=2, resize_size=(640, 6
                     except Exception:
                         pass
             if not cap or not cap.isOpened():
-                logger.warning(f"无法连接RTSP流: {rtsp_url}，10秒后重试（已尝试默认与TCP）...")
+                logger.warning(f"无法连接RTSP流: {rtsp_url}，10秒后重试（已尝试 FFmpeg+TCP 及默认）...")
                 time.sleep(10)
                 continue
             # 获取原帧率（用于计算抽帧间隔）
@@ -64,12 +110,22 @@ def rtsp_processor(rtsp_url, frame_queue, stop_event, fps=2, resize_size=(640, 6
         if record_cmd_queue is not None:
             try:
                 cmd = record_cmd_queue.get_nowait()
-                if isinstance(cmd, str):
-                    c = cmd.strip().lower()
+                if isinstance(cmd, dict):
+                    try:
+                        c = str(cmd.get("cmd", "")).strip().lower()
+                    except Exception:
+                        c = ""
                     if c == "start":
                         pending_start = True
+                        try:
+                            pending_duration = float(cmd.get("duration", clip_duration_sec))
+                        except Exception:
+                            pending_duration = float(clip_duration_sec)
                     elif c == "stop":
                         recording_end_ts = 0.0
+                else:
+                    # 忽略非字典命令
+                    pass
                 record_cmd_queue.task_done()
             except queue.Empty:
                 pass
@@ -84,6 +140,18 @@ def rtsp_processor(rtsp_url, frame_queue, stop_event, fps=2, resize_size=(640, 6
             continue
         
         now = time.time()
+        # 维护预录缓冲：按时间窗口保留最近 _buffer_sec 秒的帧
+        if _buffer_sec > 0:
+            try:
+                _frame_buffer.append((now, frame.copy()))
+                # 清理过期帧
+                while _frame_buffer and (now - _frame_buffer[0][0] > _buffer_sec):
+                    _frame_buffer.popleft()
+            except Exception:
+                # 内存不足时可适当丢弃
+                if _frame_buffer:
+                    _frame_buffer.popleft()
+
         if pending_start:
             try:
                 os.makedirs(clip_dir, exist_ok=True)
@@ -102,8 +170,19 @@ def rtsp_processor(rtsp_url, frame_queue, stop_event, fps=2, resize_size=(640, 6
                     logger.error(f"启动录制失败: 无法打开输出文件 {out_path}")
                     writer = None
                 else:
-                    recording_end_ts = now + float(clip_duration_sec)
-                    logger.info(f"开始录制: {out_path}，预计持续 {clip_duration_sec} 秒")
+                    recording_end_ts = now + float(pending_duration)
+                    logger.info(f"开始录制: {out_path}，预计持续 {pending_duration} 秒")
+                    # 写入预录缓冲中的帧（时间在 _buffer_sec 窗口内的）
+                    if _buffer_sec > 0 and _frame_buffer:
+                        try:
+                            for ts_buf, f_buf in list(_frame_buffer):
+                                if (now - ts_buf) <= _buffer_sec:
+                                    try:
+                                        writer.write(f_buf)
+                                    except Exception:
+                                        pass
+                        except Exception:
+                            pass
             except Exception as e:
                 logger.exception(f"启动录制异常: {e}")
                 writer = None
