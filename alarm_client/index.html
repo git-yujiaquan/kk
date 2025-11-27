@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>智路瞳 安全监测平台</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+        }
+
+        body {
+            display: flex;
+            height: 100vh;
+            background-color: #f8f9fa;
+            overflow: hidden;
+        }
+
+        /* 🔵 白底蓝字标题栏 */
+        .header-bar {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 60px;
+            background-color: white;
+            border-bottom: 1px solid #e0e0e0;
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            z-index: 10;
+        }
+
+        .logo-container {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-left: 20px;
+        }
+
+        .logo-placeholder {
+            width: 60px;
+            height: 48px;
+            object-fit: contain;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 16px;
+            color: white;
+        }
+
+        .platform-title {
+            font-size: 22px;
+            margin-left: 5px;
+            font-weight: 600;
+            color: #0d6efd;
+        }
+
+        /* 导航按钮 */
+        .nav-buttons {
+            display: flex;
+            gap: 20px;
+            height: 100%;
+            align-items: center;
+            margin-left: 40px;
+            flex-grow: 1;
+        }
+        
+        .logo-right {
+            margin-left: auto;
+            margin-right: 20px;
+        }
+
+        .nav-button {
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 15px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            color: #495057;
+            background: transparent;
+            border: none;
+        }
+
+        .nav-button:hover {
+            background-color: #e9ecef;
+        }
+
+        .nav-button.active {
+            background-color: #0d6efd;
+            color: white;
+        }
+
+        /* 主内容区（避开 header） */
+        .main-container {
+            display: flex;
+            width: 100%;
+            height: calc(100vh - 60px);
+            margin-top: 60px;
+        }
+
+        .left-panel {
+            flex: 0 0 70%;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            background-color: white;
+            border-right: 1px solid #e0e0e0;
+            overflow: hidden;
+        }
+
+        .main-image-container {
+            flex: 1;
+            background-color: #f5f5f5;
+            border: 2px dashed #ccc;
+            border-radius: 10px;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .main-image {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+
+        .right-panel {
+            flex: 0 0 30%;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            background-color: white;
+            overflow-y: auto;
+        }
+
+        .list-header {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: #333;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #eee;
+        }
+
+        .detection-item {
+            display: flex;
+            align-items: flex-start;
+            padding: 14px;
+            margin-bottom: 12px;
+            background-color: #fff;
+            border: 1px solid #e9ecef;
+            border-radius: 10px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .detection-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 3px 8px rgba(0,0,0,0.1);
+            border-color: #cfe2ff;
+        }
+
+        .thumbnail {
+            width: 80px;
+            height: 60px;
+            object-fit: cover;
+            border-radius: 6px;
+            margin-right: 14px;
+            border: 1px solid #dee2e6;
+        }
+
+        .info {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .category {
+            font-weight: 600;
+            color: #0d6efd;
+            font-size: 14px;
+        }
+
+        .location {
+            font-size: 13px;
+            color: #6c757d;
+        }
+
+        .timestamp {
+            font-size: 11px;
+            color: #adb5bd;
+        }
+
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #868e96;
+            font-size: 16px;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .empty-state svg {
+            width: 60px;
+            height: 60px;
+            margin-bottom: 15px;
+            color: #ced4da;
+        }
+
+        @media (max-width: 1200px) {
+            .main-container {
+                flex-direction: column;
+                height: calc(100vh - 60px);
+            }
+            .left-panel, .right-panel {
+                flex: none;
+                width: 100%;
+            }
+            .left-panel {
+                height: 60%;
+            }
+            .right-panel {
+                height: 40%;
+                border-top: 1px solid #e0e0e0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- 🔵 白底蓝字标题栏 + 新增导航按钮 -->
+    <header class="header-bar">
+        <div class="logo-container">
+            <div class="platform-title">智路瞳·安全监测平台</div>
+        </div>
+
+        <div class="nav-buttons">
+            <button class="nav-button active">事件上报</button>
+            <button class="nav-button">录像查看</button>
+            <button class="nav-button">事件上报设置</button>
+            <button class="nav-button">设备管理</button>
+        </div>
+        
+        <div class="logo-right">
+            <img src="logo.png" alt="Logo" class="logo-placeholder">
+        </div>
+    </header>
+
+    <div class="main-container">
+        <div class="left-panel">
+            <div class="main-image-container">
+                <img id="mainImage" class="main-image" src="" alt="暂无检测结果" />
+            </div>
+        </div>
+
+        <div class="right-panel">
+            <div class="list-header">历史检测记录</div>
+            <div id="detectionList"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:5000/api';
+        let detections = [];
+
+        async function fetchDetections() {
+            try {
+                const res = await fetch(`${API_BASE}/detections`);
+                if (!res.ok) throw new Error('网络错误');
+                const data = await res.json();
+                detections = data.detections || [];
+                renderDetectionList(detections);
+            } catch (err) {
+                console.error('获取数据失败:', err);
+                document.getElementById('detectionList').innerHTML = `
+                    <div class="empty-state">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                        <p>无法连接后端服务</p>
+                    </div>
+                `;
+                document.getElementById('mainImage').src = '';
+            }
+        }
+
+        function renderDetectionList(detections) {
+            const container = document.getElementById('detectionList');
+            if (detections.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.172 16.172a4 4 0 015.656 0M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        <p>暂无异常检测记录</p>
+                    </div>
+                `;
+                document.getElementById('mainImage').src = '';
+                return;
+            }
+
+            container.innerHTML = detections.map(det => `
+                <div class="detection-item" onclick="viewFullImage('${det.id}')">
+                    <img class="thumbnail" src="data:image/jpeg;base64,${det.image_base64}" alt="缩略图" />
+                    <div class="info">
+                        <div class="category">${det.category || '未知异常'}</div>
+                        <div class="location">${det.location || '未指定位置'}</div>
+                        <div class="timestamp">${det.timestamp}</div>
+                    </div>
+                </div>
+            `).join('');
+
+            if (!document.getElementById('mainImage').src && detections.length > 0) {
+                viewFullImage(detections[0].id);
+            }
+        }
+
+        function viewFullImage(id) {
+            const det = detections.find(d => d.id === id);
+            if (det) {
+                document.getElementById('mainImage').src = `data:image/jpeg;base64,${det.image_base64}`;
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            fetchDetections();
+            setInterval(fetchDetections, 5000);
+        });
+    </script>
+</body>
+</html>
